@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "PowerShell(Add-Type -AssemblyName System.Drawing; $img = [System.Drawing.Image]::FromFile\\('C:\\\\Users\\\\KIIT0001\\\\Desktop\\\\quickchat\\\\app\\\\icon.png'\\); \"$\\($img.Width\\) x $\\($img.Height\\)\"; $img.Dispose\\(\\))"
+      "PowerShell(Add-Type -AssemblyName System.Drawing; $img = [System.Drawing.Image]::FromFile\\('C:\\\\Users\\\\KIIT0001\\\\Desktop\\\\quickchat\\\\app\\\\icon.png'\\); \"$\\($img.Width\\) x $\\($img.Height\\)\"; $img.Dispose\\(\\))",
+      "WebFetch(domain:next-auth.js.org)",
+      "WebFetch(domain:authjs.dev)",
+      "Bash(xargs grep -l -i \"auth\")"
     ]
   }
 }

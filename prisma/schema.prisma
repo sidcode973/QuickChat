@@ -1,0 +1,257 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+
+
+// ============================================================
+// Auth (NextAuth v4 + Credentials)
+// ============================================================
+
+model User {
+  id            String     @id @default(cuid())
+  name          String?
+  email         String     @unique
+  emailVerified DateTime?
+  image         String?
+  passwordHash  String?    // Credentials provider
+
+  // Profile / presence
+  about       String?
+  status      UserStatus @default(OFFLINE)
+  lastSeenAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // NextAuth
+  accounts Account[]
+  sessions Session[]
+
+  // Chat
+  memberships    ConversationMember[]
+  messagesSent   Message[]            @relation("MessageSender")
+  messageReads   MessageRead[]
+  notifications  Notification[]
+  contactsOwned  Contact[]            @relation("ContactOwner")
+  contactsOf     Contact[]            @relation("ContactUser")
+  conversationsCreated Conversation[] @relation("ConversationCreator")
+}
+
+enum UserStatus {
+  ONLINE
+  OFFLINE
+  AWAY
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ============================================================
+// Contacts (powers "+ New Chat" and the user search)
+// ============================================================
+
+model Contact {
+  id        String   @id @default(cuid())
+  ownerId   String   // who saved the contact
+  userId    String   // the saved user
+  nickname  String?
+  createdAt DateTime @default(now())
+
+  owner User @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  user  User @relation("ContactUser",  fields: [userId],  references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, userId])
+  @@index([userId])
+}
+
+// ============================================================
+// Conversations (1:1 and groups)
+// ============================================================
+
+model Conversation {
+  id          String   @id @default(cuid())
+  isGroup     Boolean  @default(false)
+  name        String?  // group name, e.g. "College Friends"
+  image       String?  // group avatar
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Used to sort the chat list (Riya 10:30, Rohit 10:28, ...)
+  lastMessageId String?  @unique
+  lastMessageAt DateTime?
+
+  createdBy   User?               @relation("ConversationCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  members     ConversationMember[]
+  messages    Message[]           @relation("ConversationMessages")
+  lastMessage Message?            @relation("ConversationLastMessage", fields: [lastMessageId], references: [id], onDelete: SetNull)
+
+  @@index([lastMessageAt])
+}
+
+model ConversationMember {
+  id             String     @id @default(cuid())
+  conversationId String
+  userId         String
+  role           MemberRole @default(MEMBER)
+  joinedAt       DateTime   @default(now())
+  leftAt         DateTime?
+
+  // Per-member state
+  lastReadAt DateTime?  // drives unread badge counts (the "2", "5" pills)
+  muted      Boolean    @default(false)
+  pinned     Boolean    @default(false)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+}
+
+enum MemberRole {
+  ADMIN
+  MEMBER
+}
+
+// ============================================================
+// Messages
+// ============================================================
+
+model Message {
+  id             String      @id @default(cuid())
+  conversationId String
+  senderId       String
+  content        String?     @db.Text     // null when message is attachments-only
+  type           MessageType @default(TEXT)
+  createdAt      DateTime    @default(now())
+  editedAt       DateTime?
+  deletedAt      DateTime?                 // soft delete
+
+  // Replies / threads
+  replyToId String?
+  replyTo   Message?  @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies   Message[] @relation("MessageReplies")
+
+  conversation Conversation @relation("ConversationMessages", fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User         @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+
+  attachments Attachment[]
+  reads       MessageRead[]
+
+  // Back-reference for Conversation.lastMessage
+  lastMessageOf Conversation? @relation("ConversationLastMessage")
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+}
+
+enum MessageType {
+  TEXT
+  IMAGE     // the "Photo" preview from Dev Sharma's row
+  FILE
+  SYSTEM    // "Karan added Riya", "Group name changed", etc.
+}
+
+model Attachment {
+  id        String   @id @default(cuid())
+  messageId String
+  url       String
+  mimeType  String
+  fileName  String?
+  size      Int?     // bytes
+  width     Int?     // images
+  height    Int?
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+}
+
+// Per-recipient receipts — drives the single tick (delivered) and
+// double tick (read) shown on Arjun's outgoing messages.
+model MessageRead {
+  id          String    @id @default(cuid())
+  messageId   String
+  userId      String    // the recipient, NOT the sender
+  deliveredAt DateTime?
+  readAt      DateTime?
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([userId])
+}
+
+// ============================================================
+// Notifications (the "5" badge on the sidebar)
+// ============================================================
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  body      String?
+  data      Json?            // e.g. { conversationId, messageId }
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
+}
+
+enum NotificationType {
+  MESSAGE
+  MENTION
+  GROUP_INVITE
+  GROUP_UPDATE
+  CONTACT_REQUEST
+  SYSTEM
+}
